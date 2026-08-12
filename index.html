@@ -62,6 +62,7 @@
     box-shadow:0 4px 18px rgba(0,0,0,.12);
   }
   .statement .bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;display:block}
+  .statement .doc-img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;z-index:0;display:block;background:#fff}
   .statement .content{position:absolute;inset:0;z-index:1;padding:200px 96px 210px 96px;
     font-size:15px;line-height:1.5;color:#111}
 
@@ -364,48 +365,23 @@ function agrupar(rows){
   return orden.map(id=>{ const e=estados[id]; e.prop=splitOwners(e.prop); return e; });
 }
 
-function buildCard(e, idx){
-  let total = 0;
-  const filas = e.lineas.map(l=>{
-    total += l.ingreso ? l.valor : -l.valor;
-    const signo = l.ingreso ? '' : '-';
-    return `<tr><td class="c">${escapeHtml(l.concepto)}</td>
-      <td class="v"><div class="vrow"><span class="sg">${signo}</span><span>${fmt(l.valor)}</span></div></td></tr>`;
-  }).join('');
-  const fechaLinea = [e.ciudad||'Bucaramanga', e.fecha].filter(Boolean).join(', ');
-  const soporte = e.soporte
-    ? `<div class="soporte-wrap"><img src="${e.soporte}" alt="Soporte de pago"></div>`
-    : '';
-  const btnSoporte = e.soporte ? '📎 Cambiar soporte' : '📎 Soporte de pago';
+// Dibuja la tarjeta usando el MISMO motor del PDF -> refleja los ajustes de espacio en vivo
+async function buildCard(e, idx){
   const el = document.createElement('div');
   el.className='statement';
-  el.innerHTML = `
-    <div class="card-actions">
-      <button class="edit" onclick="attachSoporte(${idx})">${btnSoporte}</button>
-      <button class="edit" onclick="editEstado(${idx})">✏️ Editar</button>
-      <button class="del" onclick="deleteEstado(${idx})">🗑️ Eliminar</button>
-    </div>
-    <img class="bg" src="${WATERMARK}" alt="">
-
-    <div class="content">
-      <p class="fecha">${escapeHtml(fechaLinea)}</p>
-      <p class="titulo">ESTADO DE CUENTA</p>
-      <p class="encab">${propHtml(e.prop)}<br>${escapeHtml(e.inm)}</p>
-      <table class="cuadro">
-        <tr><td colspan="2" class="hd">${propHtml(e.prop)}<br>${escapeHtml(e.inm)}</td></tr>
-        <tr><td colspan="2" class="per">${escapeHtml(e.per)}</td></tr>
-        ${filas}
-        <tr><td class="c tot">TOTAL A PAGAR</td>
-          <td class="v tot"><div class="vrow"><span class="sg"></span><span>${fmt(total)}</span></div></td></tr>
-      </table>
-      ${soporte}
-      <div class="cierre">
-        Cordialmente,
-        <div class="firma">DEPARTAMENTO CONTABLE<br>
-        GRUPO ANDINO INMOBILIARIO S.A.S<br>
-        Nit. No. 900941454-2</div>
-      </div>
-    </div>`;
+  const btnSoporte = e.soporte ? '📎 Cambiar soporte' : '📎 Soporte de pago';
+  const actions = document.createElement('div');
+  actions.className='card-actions';
+  actions.innerHTML = `
+    <button class="edit" onclick="attachSoporte(${idx})">${btnSoporte}</button>
+    <button class="edit" onclick="editEstado(${idx})">✏️ Editar</button>
+    <button class="del" onclick="deleteEstado(${idx})">🗑️ Eliminar</button>`;
+  el.appendChild(actions);
+  const img = document.createElement('img');
+  img.className='doc-img'; img.alt='';
+  el.appendChild(img);
+  try{ const cv = await renderStatementCanvas(e); img.src = cv.toDataURL('image/jpeg', 0.9); }
+  catch(err){ console.error(err); }
   return el;
 }
 
@@ -480,7 +456,9 @@ function onAjuste(key, value){
   AJUSTES[key]=parseInt(value,10);
   const o=document.getElementById('aj_'+key+'_v'); if(o) o.textContent=AJUSTES[key];
   guardarAjustes();
-  renderAjustesPreview();
+  renderAjustesPreview();                 // vista previa del panel (rápida)
+  clearTimeout(onAjuste._t);
+  onAjuste._t=setTimeout(()=>{ if(ESTADOS.length) render(); }, 450); // actualiza los estados reales
 }
 function restaurarAjustes(){
   AJUSTES={ ...AJUSTES_DEF }; guardarAjustes();
@@ -509,14 +487,10 @@ function renderAjustesPreview(){
   }, 120);
 }
 
-function render(){
+render._token=0;
+async function render(){
   const docs = document.getElementById('docs');
-  docs.innerHTML='';
-  if(!ESTADOS.length){
-    docs.innerHTML = '<div class="empty">No hay estados todavía. Carga un Excel o crea uno manual con “Nuevo estado”.</div>';
-  } else {
-    ESTADOS.forEach((e,idx)=> docs.appendChild(buildCard(e,idx)));
-  }
+  // Estado de la barra e info inmediata (sin esperar a las imágenes)
   document.getElementById('count').textContent = ESTADOS.length ? ESTADOS.length + ' estado(s) generado(s)' : '';
   document.getElementById('btnPrint').disabled = ESTADOS.length===0;
   document.getElementById('btnPdf').disabled = ESTADOS.length===0;
@@ -524,6 +498,19 @@ function render(){
   document.getElementById('hint').style.display = ESTADOS.length ? 'none' : 'block';
   if(document.getElementById('soportesPanel').style.display !== 'none') renderSoportesLista();
   persist();
+  // Documentos (dibujados con el motor del PDF, reflejan los ajustes)
+  docs.innerHTML='';
+  if(!ESTADOS.length){
+    docs.innerHTML = '<div class="empty">No hay estados todavía. Carga un Excel o crea uno manual con “Nuevo estado”.</div>';
+    return;
+  }
+  const token = ++render._token;   // cancela renders anteriores que sigan en curso
+  for(let idx=0; idx<ESTADOS.length; idx++){
+    if(render._token!==token) return;
+    const card = await buildCard(ESTADOS[idx], idx);
+    if(render._token!==token) return;
+    docs.appendChild(card);
+  }
 }
 
 /* ---------- Editor manual ---------- */
