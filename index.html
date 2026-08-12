@@ -690,89 +690,108 @@ async function renderStatementCanvas(e){
     ctx.drawImage(MEMBRETE_IMG, sx,sy,sw,sh, 0,0,W,H);
   }
   const L=96, R=720, CX=(L+R)/2;
-  ctx.fillStyle='#111111';
-  // Fecha
-  ctx.font='15px Arial, Helvetica, sans-serif'; ctx.textAlign='left';
-  ctx.fillText([e.ciudad||'Bucaramanga', e.fecha].filter(Boolean).join(', '), L, 214);
-  // Título y encabezado
-  ctx.textAlign='center';
-  ctx.font='bold 19px Arial, Helvetica, sans-serif';
-  ctx.fillText('ESTADO DE CUENTA', CX, 258);
-  ctx.font='bold 15px Arial, Helvetica, sans-serif';
+  const boxL=96, boxR=720, boxW=boxR-boxL, vX=565;
+  const FECHA_Y=198;      // fecha un poco más arriba (deja más espacio)
+  const LIMIT=852;        // borde inferior útil (antes del pie verde)
+
   const owners=(e.prop||'').split('\n').filter(Boolean);
-  let ey=284;
-  owners.forEach(o=>{ ctx.fillText(o, CX, ey); ey+=20; });
-  if(e.inm){ ctx.fillText(e.inm, CX, ey); ey+=20; }
-  const encabBottom=ey;
+  let total=0; e.lineas.forEach(l=> total += l.ingreso ? l.valor : -l.valor);
 
-  // ===== Cuadro con bordes =====
-  const boxL=96, boxR=720, boxW=boxR-boxL, vX=565, padX=11, lineH=21;
-  ctx.strokeStyle='#1f1f1f'; ctx.lineWidth=1.2;
-  ctx.font='14px Arial, Helvetica, sans-serif';
+  // Precargar el soporte para conocer su proporción antes de medir
+  let soporteImg=null;
+  if(e.soporte){ soporteImg = await cargarImagen(e.soporte); }
 
-  // Construir filas y calcular alturas
-  const rows=[];
-  rows.push({type:'hd', lines:[...owners, e.inm||''].filter(Boolean)});
-  rows.push({type:'per', lines:[e.per||'']});
-  let total=0;
-  e.lineas.forEach(l=>{
-    total += l.ingreso ? l.valor : -l.valor;
-    const wrapped=wrapText(ctx, l.concepto, (vX-boxL)-padX*2);
-    rows.push({type:'con', lines:wrapped, sign:l.ingreso?'':'-', val:fmt(l.valor)});
-  });
-  rows.push({type:'tot', val:fmt(total)});
-
-  let y=Math.max(336, encabBottom+14); const boxTop=y;
-  rows.forEach(row=>{
-    const nl=(row.lines?row.lines.length:1);
-    const rh=Math.max(30, nl*lineH+12);
-    const top=y, bot=y+rh, mid=top+rh/2;
-    if(row.type==='hd' || row.type==='per'){
-      ctx.font='bold 14px Arial, Helvetica, sans-serif'; ctx.textAlign='center'; ctx.fillStyle='#111';
-      let ty=top+(rh-nl*lineH)/2+15;
-      (row.lines||['']).forEach(ln=>{ ctx.fillText(ln, CX, ty); ty+=lineH; });
-    } else if(row.type==='con'){
-      ctx.font='14px Arial, Helvetica, sans-serif'; ctx.fillStyle='#111';
-      ctx.textAlign='left';
-      let ty=top+(rh-nl*lineH)/2+15;
-      row.lines.forEach(ln=>{ ctx.fillText(ln, boxL+padX, ty); ty+=lineH; });
-      if(row.sign){ ctx.fillText(row.sign, vX+padX, mid+5); }
-      ctx.textAlign='right'; ctx.fillText(row.val, boxR-padX, mid+5);
-      ctx.beginPath(); ctx.moveTo(vX,top); ctx.lineTo(vX,bot); ctx.stroke();
-    } else { // total
-      ctx.font='bold 15px Arial, Helvetica, sans-serif'; ctx.fillStyle='#111'; ctx.textAlign='right';
-      ctx.fillText('TOTAL A PAGAR', vX-padX, mid+5);
-      ctx.fillText(row.val, boxR-padX, mid+5);
-      ctx.beginPath(); ctx.moveTo(vX,top); ctx.lineTo(vX,bot); ctx.stroke();
+  // Planificador: calcula todas las posiciones para una escala s (sin dibujar)
+  function plan(s){
+    const lineH=21*s, padX=11*s, conFont=14*s;
+    ctx.font=`${conFont}px Arial, Helvetica, sans-serif`;
+    const rows=[];
+    rows.push({type:'hd', lines:[...owners, e.inm||''].filter(Boolean)});
+    rows.push({type:'per', lines:[e.per||'']});
+    e.lineas.forEach(l=>{
+      const wrapped=wrapText(ctx, l.concepto, (vX-boxL)-padX*2);
+      rows.push({type:'con', lines:wrapped, sign:l.ingreso?'':'-', val:fmt(l.valor)});
+    });
+    rows.push({type:'tot', val:fmt(total)});
+    // Encabezado
+    const titleY=FECHA_Y+44*s;
+    let ey=titleY+26*s; const encab=[];
+    owners.forEach(o=>{ encab.push({t:o, y:ey}); ey+=20*s; });
+    if(e.inm){ encab.push({t:e.inm, y:ey}); ey+=20*s; }
+    // Caja
+    let y=ey+14*s; const boxTop=y;
+    rows.forEach(row=>{
+      const nl=(row.lines?row.lines.length:1);
+      row.rh=Math.max(26*s, nl*lineH+12*s); row.top=y; y+=row.rh;
+    });
+    const boxBot=y;
+    // Soporte
+    let sy=boxBot+16*s, soporteDraw=null;
+    if(soporteImg){
+      const maxH=230*s, sc=Math.min(boxW/soporteImg.naturalWidth, maxH/soporteImg.naturalHeight, 1);
+      const dw=soporteImg.naturalWidth*sc, dh=soporteImg.naturalHeight*sc;
+      soporteDraw={x:CX-dw/2, y:sy, w:dw, h:dh}; sy+=dh+8*s;
     }
-    ctx.beginPath(); ctx.moveTo(boxL,bot); ctx.lineTo(boxR,bot); ctx.stroke(); // separador
-    y=bot;
-  });
-  const boxBot=y;
-  ctx.beginPath(); ctx.rect(boxL, boxTop, boxW, boxBot-boxTop); ctx.stroke(); // marco exterior
-
-  // ===== Soporte de pago (imagen) =====
-  y=boxBot+16;
-  if(e.soporte){
-    const im=await cargarImagen(e.soporte);
-    if(im){
-      const maxW=boxW, maxH=230, sc=Math.min(maxW/im.naturalWidth, maxH/im.naturalHeight, 1);
-      const dw=im.naturalWidth*sc, dh=im.naturalHeight*sc;
-      ctx.drawImage(im, CX-dw/2, y, dw, dh);
-      y+=dh+8;
-    }
+    // Cierre / firma
+    let cy=Math.max(sy, boxBot)+42*s;
+    const cordY=cy; cy+=50*s;
+    const firmaYs=[cy]; cy+=21*s; firmaYs.push(cy); cy+=21*s; firmaYs.push(cy);
+    return {s, lineH, padX, conFont, titleY, encab, rows, boxTop, boxBot, soporteDraw, cordY, firmaYs, bottomY:cy};
   }
 
-  // ===== Cierre / firma =====
+  // Elegir la mayor escala (<=1) con la que TODO cabe en una hoja
+  let s=1, P=plan(1);
+  while(P.bottomY>LIMIT && s>0.5){ s=Math.round((s-0.02)*100)/100; P=plan(s); }
+
+  // ===== Dibujar =====
+  const padX=P.padX;
+  ctx.fillStyle='#111';
+  // Fecha
+  ctx.textAlign='left'; ctx.font=`${15*s}px Arial, Helvetica, sans-serif`;
+  ctx.fillText([e.ciudad||'Bucaramanga', e.fecha].filter(Boolean).join(', '), L, FECHA_Y);
+  // Título y encabezado
+  ctx.textAlign='center'; ctx.font=`bold ${19*s}px Arial, Helvetica, sans-serif`;
+  ctx.fillText('ESTADO DE CUENTA', CX, P.titleY);
+  ctx.font=`bold ${15*s}px Arial, Helvetica, sans-serif`;
+  P.encab.forEach(o=> ctx.fillText(o.t, CX, o.y));
+
+  // Cuadro
+  ctx.strokeStyle='#1f1f1f'; ctx.lineWidth=1.2;
+  P.rows.forEach(row=>{
+    const nl=(row.lines?row.lines.length:1);
+    const top=row.top, rh=row.rh, bot=top+rh, mid=top+rh/2;
+    if(row.type==='hd' || row.type==='per'){
+      ctx.font=`bold ${14*s}px Arial, Helvetica, sans-serif`; ctx.textAlign='center'; ctx.fillStyle='#111';
+      let ty=top+(rh-nl*P.lineH)/2+14.5*s;
+      (row.lines||['']).forEach(ln=>{ ctx.fillText(ln, CX, ty); ty+=P.lineH; });
+    } else if(row.type==='con'){
+      ctx.font=`${P.conFont}px Arial, Helvetica, sans-serif`; ctx.fillStyle='#111'; ctx.textAlign='left';
+      let ty=top+(rh-nl*P.lineH)/2+14.5*s;
+      row.lines.forEach(ln=>{ ctx.fillText(ln, boxL+padX, ty); ty+=P.lineH; });
+      if(row.sign){ ctx.fillText(row.sign, vX+padX, mid+5*s); }
+      ctx.textAlign='right'; ctx.fillText(row.val, boxR-padX, mid+5*s);
+      ctx.beginPath(); ctx.moveTo(vX,top); ctx.lineTo(vX,bot); ctx.stroke();
+    } else { // total
+      ctx.font=`bold ${15*s}px Arial, Helvetica, sans-serif`; ctx.fillStyle='#111'; ctx.textAlign='right';
+      ctx.fillText('TOTAL A PAGAR', vX-padX, mid+5*s);
+      ctx.fillText(row.val, boxR-padX, mid+5*s);
+      ctx.beginPath(); ctx.moveTo(vX,top); ctx.lineTo(vX,bot); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.moveTo(boxL,bot); ctx.lineTo(boxR,bot); ctx.stroke();
+  });
+  ctx.beginPath(); ctx.rect(boxL, P.boxTop, boxW, P.boxBot-P.boxTop); ctx.stroke();
+
+  // Soporte
+  if(P.soporteDraw && soporteImg){ const d=P.soporteDraw; ctx.drawImage(soporteImg, d.x, d.y, d.w, d.h); }
+
+  // Cierre / firma
   ctx.fillStyle='#111'; ctx.textAlign='left';
-  y=Math.max(y, boxBot)+42;
-  ctx.font='15px Arial, Helvetica, sans-serif';
-  ctx.fillText('Cordialmente,', L, y);
-  y+=50;
-  ctx.font='bold 15px Arial, Helvetica, sans-serif';
-  ctx.fillText('DEPARTAMENTO CONTABLE', L, y); y+=21;
-  ctx.fillText('GRUPO ANDINO INMOBILIARIO S.A.S', L, y); y+=21;
-  ctx.fillText('Nit. No. 900941454-2', L, y);
+  ctx.font=`${15*s}px Arial, Helvetica, sans-serif`;
+  ctx.fillText('Cordialmente,', L, P.cordY);
+  ctx.font=`bold ${15*s}px Arial, Helvetica, sans-serif`;
+  ctx.fillText('DEPARTAMENTO CONTABLE', L, P.firmaYs[0]);
+  ctx.fillText('GRUPO ANDINO INMOBILIARIO S.A.S', L, P.firmaYs[1]);
+  ctx.fillText('Nit. No. 900941454-2', L, P.firmaYs[2]);
   return cv;
 }
 
