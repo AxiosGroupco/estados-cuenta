@@ -117,6 +117,13 @@
   /* Panel lista de soportes */
   .panel{background:#fff;max-width:1000px;margin:20px auto;padding:20px 24px;border-radius:12px;border:1px solid var(--borde);box-shadow:0 2px 10px rgba(0,0,0,.05)}
   .panel h2{margin:0 0 6px;font-size:17px;color:var(--verde-osc)}
+  .aj-grid{display:grid;grid-template-columns:1fr 340px;gap:24px;align-items:start}
+  .aj-row{display:grid;grid-template-columns:1fr 60px;gap:6px 12px;align-items:center;margin-bottom:16px;font-size:13px;font-weight:600;color:#444}
+  .aj-row span{grid-column:1 / -1}
+  .aj-row input[type=range]{width:100%;accent-color:var(--verde)}
+  .aj-row output{font-variant-numeric:tabular-nums;font-weight:700;color:var(--verde-osc);text-align:right}
+  .aj-preview{position:sticky;top:10px}
+  @media(max-width:820px){ .aj-grid{grid-template-columns:1fr} }
   .panel .sub{font-size:13px;color:#666;margin:0 0 14px}
   table.lista{width:100%;border-collapse:collapse;font-size:13.5px}
   table.lista th,table.lista td{border-bottom:1px solid var(--borde);padding:8px 10px;text-align:left;vertical-align:middle}
@@ -157,6 +164,7 @@
   <button class="btn btn-primary" onclick="document.getElementById('file').click()">📂 Cargar Excel / CSV</button>
   <button class="btn btn-ghost" id="btnNuevo" onclick="toggleEditor()">✏️ Nuevo estado (manual)</button>
   <button class="btn btn-ghost" id="btnSoportes" onclick="toggleSoportes()">📎 Adjuntar soportes</button>
+  <button class="btn btn-ghost" id="btnAjustes" onclick="toggleAjustes()">⚙️ Ajustar espacios</button>
   <button class="btn btn-ghost" id="btnTpl" onclick="descargarPlantilla()">⬇️ Descargar plantilla</button>
   <span class="count" id="count"></span>
   <span class="count" id="saveStatus" style="opacity:0;transition:opacity .3s;color:var(--verde-osc);font-weight:600"></span>
@@ -204,6 +212,39 @@
   <div style="max-height:60vh;overflow:auto"><table class="lista" id="listaSoportes"></table></div>
 </div>
 
+<div class="panel" id="ajustesPanel" style="display:none">
+  <h2>⚙️ Ajustar espacios del documento</h2>
+  <p class="sub">Mueve los controles y mira la vista previa. Los cambios se aplican a <strong>todos los estados</strong> (en el PDF y la impresión) y se guardan en este equipo.</p>
+  <div class="aj-grid">
+    <div class="aj-controls">
+      <label class="aj-row">
+        <span>Margen superior (posición de la fecha)</span>
+        <input type="range" id="aj_fechaY" min="120" max="280" step="1" oninput="onAjuste('fechaY', this.value)">
+        <output id="aj_fechaY_v"></output>
+      </label>
+      <label class="aj-row">
+        <span>Margen inferior (dónde termina la firma, sobre blanco)</span>
+        <input type="range" id="aj_limite" min="740" max="880" step="1" oninput="onAjuste('limite', this.value)">
+        <output id="aj_limite_v"></output>
+      </label>
+      <label class="aj-row">
+        <span>Separación antes de la firma</span>
+        <input type="range" id="aj_gapFirma" min="16" max="90" step="1" oninput="onAjuste('gapFirma', this.value)">
+        <output id="aj_gapFirma_v"></output>
+      </label>
+      <p class="sub" style="margin:8px 0 14px">💡 Sube la fecha (menor margen superior) o baja el margen inferior si la firma cae sobre el verde.</p>
+      <div class="editor-actions">
+        <button class="btn btn-ghost" onclick="restaurarAjustes()">↺ Restaurar valores</button>
+        <button class="btn btn-primary" onclick="toggleAjustes(false)">Listo</button>
+      </div>
+    </div>
+    <div class="aj-preview">
+      <div class="sub" style="margin-bottom:6px">Vista previa (así saldrá el PDF)</div>
+      <img id="aj_preview_img" alt="vista previa" style="width:100%;border:1px solid var(--borde);border-radius:6px;background:#fff">
+    </div>
+  </div>
+</div>
+
 <div class="err" id="err"></div>
 
 <div class="hint" id="hint">
@@ -238,6 +279,12 @@ const WATERMARK = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUEBA
 
 let ESTADOS = [];      // lista unificada (Excel + manual)
 let editIndex = -1;    // índice en edición, -1 = nuevo
+
+// Ajustes de espaciado del documento (editables por el usuario, se guardan en el equipo)
+const AJUSTES_DEF = { fechaY:160, limite:818, gapFirma:42 };
+let AJUSTES = { ...AJUSTES_DEF };
+try{ const g=localStorage.getItem('ga_ajustes'); if(g) AJUSTES={ ...AJUSTES_DEF, ...JSON.parse(g) }; }catch(e){}
+function guardarAjustes(){ try{ localStorage.setItem('ga_ajustes', JSON.stringify(AJUSTES)); }catch(e){} }
 
 function fmt(n){
   n = Math.round(Number(n)||0);
@@ -414,6 +461,52 @@ function verSoporte(i){
   bg.innerHTML=`<div class="cap">${escapeHtml((e.prop||'').split('\n').filter(Boolean).join(' / '))} — ${escapeHtml(e.inm||'')} · clic para cerrar</div><img src="${e.soporte}" alt="soporte">`;
   bg.onclick=()=>bg.remove();
   document.body.appendChild(bg);
+}
+
+/* ---------- Panel: ajustar espacios del documento ---------- */
+function toggleAjustes(show){
+  const p=document.getElementById('ajustesPanel');
+  const abrir=(show===undefined)? p.style.display==='none' : show;
+  p.style.display= abrir ? 'block' : 'none';
+  if(abrir){ sincronizarSlidersAjustes(); renderAjustesPreview(); p.scrollIntoView({behavior:'smooth', block:'start'}); }
+}
+function sincronizarSlidersAjustes(){
+  [['fechaY'],['limite'],['gapFirma']].forEach(([k])=>{
+    const s=document.getElementById('aj_'+k), o=document.getElementById('aj_'+k+'_v');
+    if(s){ s.value=AJUSTES[k]; } if(o){ o.textContent=AJUSTES[k]; }
+  });
+}
+function onAjuste(key, value){
+  AJUSTES[key]=parseInt(value,10);
+  const o=document.getElementById('aj_'+key+'_v'); if(o) o.textContent=AJUSTES[key];
+  guardarAjustes();
+  renderAjustesPreview();
+}
+function restaurarAjustes(){
+  AJUSTES={ ...AJUSTES_DEF }; guardarAjustes();
+  sincronizarSlidersAjustes(); renderAjustesPreview();
+}
+// Estado de muestra para la vista previa cuando no hay ninguno cargado
+function estadoMuestra(){
+  return {ciudad:'Bucaramanga', fecha:'10 de Agosto del 2026', prop:'PROPIETARIO DE EJEMPLO', inm:'INMUEBLE / APTO 000', per:'JULIO 2026',
+    lineas:[
+      {concepto:'CANON ARRENDAMIENTO', valor:2233050, ingreso:true},
+      {concepto:'RETENCIÓN EN LA FUENTE 3.5% CANON', valor:78157, ingreso:false},
+      {concepto:'RETEICA', valor:11165, ingreso:false},
+      {concepto:'COMISIÓN GRUPO ANDINO INMOBILIARIO', valor:178644, ingreso:false},
+      {concepto:'IVA COMISIÓN GRUPO ANDINO INMOBILIARIO', valor:33942, ingreso:false},
+      {concepto:'COBRAR AL PROPIETARIO SUMINISTRO E INSTALACION DE TOTALIZADOR TRIFASICO LOCAL CACIQUE [2] TRANS 93 # 34-99 LOCAL 279', valor:117200, ingreso:false}
+    ]};
+}
+let _preT=null;
+function renderAjustesPreview(){
+  clearTimeout(_preT);
+  _preT=setTimeout(async()=>{
+    const e = ESTADOS[0] || estadoMuestra();
+    try{ const cv=await renderStatementCanvas(e);
+      const img=document.getElementById('aj_preview_img'); if(img) img.src=cv.toDataURL('image/jpeg',0.85);
+    }catch(err){ console.error(err); }
+  }, 120);
 }
 
 function render(){
@@ -691,8 +784,8 @@ async function renderStatementCanvas(e){
   }
   const L=96, R=720, CX=(L+R)/2;
   const boxL=96, boxR=720, boxW=boxR-boxL, vX=565;
-  const FECHA_Y=160;      // fecha bien arriba (justo debajo del logo) para dar más espacio abajo
-  const LIMIT=818;        // borde inferior útil: la firma queda sobre blanco, no sobre el verde
+  const FECHA_Y=AJUSTES.fechaY;   // margen superior (fecha) — editable
+  const LIMIT=AJUSTES.limite;     // margen inferior (firma sobre blanco) — editable
 
   const owners=(e.prop||'').split('\n').filter(Boolean);
   let total=0; e.lineas.forEach(l=> total += l.ingreso ? l.valor : -l.valor);
@@ -733,7 +826,7 @@ async function renderStatementCanvas(e){
       soporteDraw={x:CX-dw/2, y:sy, w:dw, h:dh}; sy+=dh+8*s;
     }
     // Cierre / firma
-    let cy=Math.max(sy, boxBot)+42*s;
+    let cy=Math.max(sy, boxBot)+AJUSTES.gapFirma*s;
     const cordY=cy; cy+=50*s;
     const firmaYs=[cy]; cy+=21*s; firmaYs.push(cy); cy+=21*s; firmaYs.push(cy);
     return {s, lineH, padX, conFont, titleY, encab, rows, boxTop, boxBot, soporteDraw, cordY, firmaYs, bottomY:cy};
