@@ -691,7 +691,7 @@ async function renderStatementCanvas(e){
   }
   const L=96, R=720, CX=(L+R)/2;
   const boxL=96, boxR=720, boxW=boxR-boxL, vX=565;
-  const FECHA_Y=190;      // fecha un poco más arriba (deja más espacio)
+  const FECHA_Y=160;      // fecha bien arriba (justo debajo del logo) para dar más espacio abajo
   const LIMIT=818;        // borde inferior útil: la firma queda sobre blanco, no sobre el verde
 
   const owners=(e.prop||'').split('\n').filter(Boolean);
