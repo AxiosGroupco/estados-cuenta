@@ -854,12 +854,13 @@ function esperarImagenes(el){
 }
 const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 function mesDe(e){
-  // Prioriza el período (ej. "JUNIO 2026"); si no, extrae el mes de la fecha
-  if(e.per && e.per.trim()) return e.per.trim().toUpperCase();
+  // Usa el mes de la FECHA (ej. "10 de Agosto del 2026" -> "AGOSTO 2026").
   const f=(e.fecha||'').toLowerCase();
   const re=new RegExp('('+MESES.join('|')+')\\s*(?:de[l]?\\s*)?(\\d{4})?','i');
   const m=f.match(re);
   if(m) return (m[1]+(m[2]?' '+m[2]:'')).toUpperCase();
+  // Si la fecha no trae mes reconocible, usa el período como respaldo.
+  if(e.per && e.per.trim()) return e.per.trim().toUpperCase();
   return '';
 }
 function nombreArchivo(e){
