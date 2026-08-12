@@ -691,8 +691,8 @@ async function renderStatementCanvas(e){
   }
   const L=96, R=720, CX=(L+R)/2;
   const boxL=96, boxR=720, boxW=boxR-boxL, vX=565;
-  const FECHA_Y=198;      // fecha un poco más arriba (deja más espacio)
-  const LIMIT=852;        // borde inferior útil (antes del pie verde)
+  const FECHA_Y=190;      // fecha un poco más arriba (deja más espacio)
+  const LIMIT=818;        // borde inferior útil: la firma queda sobre blanco, no sobre el verde
 
   const owners=(e.prop||'').split('\n').filter(Boolean);
   let total=0; e.lineas.forEach(l=> total += l.ingreso ? l.valor : -l.valor);
