@@ -184,6 +184,7 @@
   <button class="btn btn-primary" onclick="document.getElementById('file').click()">📂 Cargar Excel / CSV</button>
   <button class="btn btn-ghost" id="btnProcesar" onclick="toggleProcesar()">🔧 Procesar originales</button>
   <button class="btn btn-ghost" id="btnCedulas" onclick="toggleCedulas()">🪪 Por cédula</button>
+  <button class="btn btn-ghost" id="btnRenombrar" onclick="toggleRenombrar()">📁 Renombrar PDF</button>
   <button class="btn btn-ghost" id="btnNuevo" onclick="toggleEditor()">✏️ Nuevo estado (manual)</button>
   <button class="btn btn-ghost" id="btnSoportes" onclick="toggleSoportes()">📎 Adjuntar soportes</button>
   <button class="btn btn-ghost" id="btnAjustes" onclick="toggleAjustes()">⚙️ Ajustar espacios</button>
@@ -319,6 +320,26 @@
     <button class="btn btn-primary" id="btnCedDesc" onclick="descargarPorCedula()">⬇️ Descargar por cédula (uno por propietario)</button>
     <button class="btn btn-ghost" onclick="renderTablaCedulas()">↻ Recalcular</button>
     <button class="btn btn-ghost" onclick="toggleCedulas(false)">Cerrar</button>
+  </div>
+</div>
+
+<div class="panel" id="renombrarPanel" style="display:none">
+  <h2>📁 Renombrar PDF existentes por cédula</h2>
+  <p class="sub">Sube tus PDF ya generados <strong>por esta app</strong> (una carpeta) + el Excel de cédulas. Detecta el propietario por el <strong>nombre del archivo</strong> y te los devuelve renombrados <strong>solo con la cédula</strong>. Si un archivo es de 2 propietarios → <strong>2 copias</strong>, una por cédula.</p>
+  <div class="proc-grid">
+    <label class="proc-file"><span>Carpeta con los PDF</span>
+      <input type="file" id="f_pdfs" accept=".pdf" webkitdirectory></label>
+    <label class="proc-file"><span>Excel de cédulas (si no lo cargaste ya)</span>
+      <input type="file" id="f_ced2" accept=".xls,.xlsx" onchange="cargarCedulas(this)"></label>
+  </div>
+  <div class="editor-actions" style="margin-top:2px">
+    <button class="btn btn-primary" onclick="analizarPdfs()">🔎 Analizar</button>
+    <button class="btn btn-ghost" onclick="toggleRenombrar(false)">Cerrar</button>
+  </div>
+  <div id="renResumen" class="proc-stats" style="display:none;margin-top:12px"></div>
+  <div id="renTablaWrap" style="display:none;max-height:52vh;overflow:auto;margin-top:12px"><table class="lista" id="renTabla"></table></div>
+  <div class="editor-actions" id="renAcciones" style="display:none;margin-top:14px">
+    <button class="btn btn-primary" id="btnRenDesc" onclick="descargarRenombrados()">⬇️ Descargar renombrados (ZIP)</button>
   </div>
 </div>
 
@@ -1218,6 +1239,78 @@ async function descargarPorCedula(){
     const a=document.createElement('a'); a.href=url;
     const mz=mesParaNombre()||mesDe(ESTADOS[0]);
     a.download=('Estados por cedula'+(mz?' '+mz:'')).trim()+'.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+  }catch(e){ alert('Error: '+(e.message||e)); console.error(e); }
+  finally{ btn.textContent=orig; btn.disabled=false; }
+}
+
+/* ============ Renombrar PDF existentes por cédula ============ */
+let PDFS_SEL = [];   // File[] de PDF a renombrar
+function toggleRenombrar(show){
+  const p=document.getElementById('renombrarPanel');
+  const abrir=(show===undefined)? p.style.display==='none' : show;
+  p.style.display= abrir ? 'block' : 'none';
+  if(abrir) p.scrollIntoView({behavior:'smooth', block:'start'});
+}
+// Propietarios detectados en el nombre del archivo (según el Excel de cédulas)
+function ownersDeNombreArchivo(fname){
+  const ftk=new Set(cedToks(fname.replace(/\.pdf$/i,'')));
+  if(!ftk.size) return [];
+  let cands=CEDULAS.filter(c=> c.tk.size>=1 && [...c.tk].every(t=>ftk.has(t)));
+  // quitar subconjuntos estrictos (quedarse con el nombre más específico)
+  cands=cands.filter(c=> !cands.some(o=> o!==c && o.tk.size>c.tk.size && [...c.tk].every(t=>o.tk.has(t))));
+  return cands;
+}
+function analizarPdfs(){
+  const inp=document.getElementById('f_pdfs');
+  PDFS_SEL=[...(inp.files||[])].filter(f=>/\.pdf$/i.test(f.name));
+  const res=document.getElementById('renResumen'), wrap=document.getElementById('renTablaWrap'), acc=document.getElementById('renAcciones');
+  res.style.display='block';
+  if(!PDFS_SEL.length){ res.innerHTML='⚠️ No seleccionaste PDF (elige una carpeta con los estados).'; wrap.style.display='none'; acc.style.display='none'; return; }
+  if(!CEDULAS.length){ res.innerHTML='⚠️ Falta el Excel de cédulas: cárgalo arriba.'; wrap.style.display='none'; acc.style.display='none'; return; }
+  let auto=0, sin=0, copias=0;
+  let html='<thead><tr><th>Archivo</th><th>Propietario detectado</th><th>Cédula / NIT</th><th>Estado</th></tr></thead><tbody>';
+  PDFS_SEL.forEach((f,fi)=>{
+    const owners=ownersDeNombreArchivo(f.name);
+    if(!owners.length){
+      sin++;
+      html+=`<tr style="background:#fdecea"><td>${escapeHtml(f.name)}</td><td>—</td>`+
+        `<td><input class="ren-nit" data-fi="${fi}" placeholder="escribe la cédula" style="width:150px;padding:5px 7px;border:1px solid var(--borde);border-radius:6px"></td>`+
+        `<td><span class="badge no">sin match</span></td></tr>`;
+    } else {
+      owners.forEach((o,k)=>{
+        auto++; copias++;
+        html+=`<tr><td>${k===0?escapeHtml(f.name):''}</td><td>${escapeHtml(o.full)}</td>`+
+          `<td><input class="ren-nit" data-fi="${fi}" value="${o.nit}" style="width:150px;padding:5px 7px;border:1px solid var(--borde);border-radius:6px"></td>`+
+          `<td><span class="badge si">✓ ${owners.length>1?('propietario '+(k+1)):'auto'}</span></td></tr>`;
+      });
+    }
+  });
+  html+='</tbody>';
+  document.getElementById('renTabla').innerHTML=html;
+  wrap.style.display='block'; acc.style.display='flex';
+  res.innerHTML=`<b>${PDFS_SEL.length}</b> PDF · <b style="color:#1b7a35">${auto} propietario(s) detectados</b> · <b style="color:#b3261e">${sin} sin match</b> · se generarán <b>${copias}</b> archivos (más los que completes a mano).`;
+}
+async function descargarRenombrados(){
+  if(typeof JSZip==='undefined'){ alert('Falta librería ZIP (¿sin internet?).'); return; }
+  const inputs=[...document.querySelectorAll('#renTabla .ren-nit')];
+  const tareas=[]; inputs.forEach(inp=>{ const fi=+inp.dataset.fi, nit=inp.value.trim().replace(/[\\/:*?"<>|]/g,''); if(nit) tareas.push({fi,nit}); });
+  if(!tareas.length){ alert('No hay cédulas asignadas.'); return; }
+  const btn=document.getElementById('btnRenDesc'); const orig=btn.textContent; btn.disabled=true;
+  try{
+    const zip=new JSZip(); const usados={}; const cache={};
+    for(let k=0;k<tareas.length;k++){
+      const {fi,nit}=tareas[k];
+      btn.textContent=`⏳ ${k+1}/${tareas.length}…`;
+      if(!cache[fi]) cache[fi]=await PDFS_SEL[fi].arrayBuffer();
+      let n=nit; if(usados[n]){ usados[n]++; n=nit+' ('+usados[n]+')'; } else usados[n]=1;
+      zip.file(n+'.pdf', cache[fi].slice(0));
+    }
+    btn.textContent='⏳ Comprimiendo…';
+    const blob=await zip.generateAsync({type:'blob'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='PDF renombrados por cedula.zip';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url),2000);
   }catch(e){ alert('Error: '+(e.message||e)); console.error(e); }
