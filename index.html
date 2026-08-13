@@ -183,6 +183,7 @@
   <input type="file" id="file" accept=".xlsx,.xls,.csv" style="display:none">
   <button class="btn btn-primary" onclick="document.getElementById('file').click()">📂 Cargar Excel / CSV</button>
   <button class="btn btn-ghost" id="btnProcesar" onclick="toggleProcesar()">🔧 Procesar originales</button>
+  <button class="btn btn-ghost" id="btnCedulas" onclick="toggleCedulas()">🪪 Por cédula</button>
   <button class="btn btn-ghost" id="btnNuevo" onclick="toggleEditor()">✏️ Nuevo estado (manual)</button>
   <button class="btn btn-ghost" id="btnSoportes" onclick="toggleSoportes()">📎 Adjuntar soportes</button>
   <button class="btn btn-ghost" id="btnAjustes" onclick="toggleAjustes()">⚙️ Ajustar espacios</button>
@@ -304,6 +305,20 @@
       <button class="btn btn-primary" onclick="descargarExcelProcesado()">⬇️ Descargar Excel (3 hojas)</button>
       <button class="btn btn-primary" onclick="cargarAlGenerador()">➡️ Cargar al generador de PDFs</button>
     </div>
+  </div>
+</div>
+
+<div class="panel" id="cedulasPanel" style="display:none">
+  <h2>🪪 Descargar por cédula / NIT</h2>
+  <p class="sub">Sube el Excel de cédulas (columnas <em>nit, nombre, apellido</em>). Empareja cada propietario con su cédula; revisa los dudosos y descarga los PDF nombrados <strong>solo con la cédula</strong>. Si un estado tiene 2 propietarios, se genera <strong>1 PDF por cada cédula</strong>. (Es aparte de la descarga por nombre.)</p>
+  <label class="proc-file" style="max-width:440px"><span>Excel de cédulas (.xls / .xlsx)</span>
+    <input type="file" id="f_ced" accept=".xls,.xlsx" onchange="cargarCedulas(this)"></label>
+  <div id="cedResumen" class="proc-stats" style="display:none;margin-top:10px"></div>
+  <div id="cedTablaWrap" style="display:none;max-height:52vh;overflow:auto;margin-top:12px"><table class="lista" id="cedTabla"></table></div>
+  <div class="editor-actions" id="cedAcciones" style="display:none;margin-top:14px">
+    <button class="btn btn-primary" id="btnCedDesc" onclick="descargarPorCedula()">⬇️ Descargar por cédula (uno por propietario)</button>
+    <button class="btn btn-ghost" onclick="renderTablaCedulas()">↻ Recalcular</button>
+    <button class="btn btn-ghost" onclick="toggleCedulas(false)">Cerrar</button>
   </div>
 </div>
 
@@ -1094,6 +1109,119 @@ async function descargarPDF(){
     }
   }catch(err){ alert('Error generando el PDF: '+(err.message||err)); console.error(err); }
   finally{ btn.textContent=original; btn.disabled=false; }
+}
+
+// Genera el PDF de un estado y devuelve su ArrayBuffer (reutilizable)
+async function pdfArrayBufferDeEstado(e){
+  await MEMBRETE_READY;
+  const { jsPDF } = window.jspdf;
+  const cv=await renderStatementCanvas(e);
+  const jpg=cv.toDataURL('image/jpeg',0.92);
+  const pdf=new jsPDF({unit:'pt', format:'letter', compress:true});
+  const W=pdf.internal.pageSize.getWidth(), H=pdf.internal.pageSize.getHeight();
+  pdf.addImage(jpg,'JPEG',0,0,W,H);
+  return pdf.output('arraybuffer');
+}
+
+/* ================= Descargar por cédula / NIT ================= */
+let CEDULAS = [];   // [{tk:Set, nit, full}]
+function cedNorm(s){ s=String(s==null?'':s).toUpperCase().trim(); s=s.normalize('NFD').replace(/[̀-ͯ]/g,''); s=s.replace(/[^A-Z0-9 ]/g,' '); return s.replace(/\s+/g,' ').trim(); }
+const CED_STOP=new Set(['DE','LA','EL','LOS','LAS','SAS','SA','S','A','Y','DEL','CIA','LTDA','NIT']);
+function cedToks(s){ return cedNorm(s).split(' ').filter(t=>t && !CED_STOP.has(t) && t.length>2); }
+function toggleCedulas(show){
+  const p=document.getElementById('cedulasPanel');
+  const abrir=(show===undefined)? p.style.display==='none' : show;
+  p.style.display= abrir ? 'block' : 'none';
+  if(abrir){ if(CEDULAS.length) renderTablaCedulas(); p.scrollIntoView({behavior:'smooth', block:'start'}); }
+}
+async function cargarCedulas(input){
+  const f=input.files[0]; if(!f) return;
+  try{
+    const wb=XLSX.read(new Uint8Array(await f.arrayBuffer()), {type:'array'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:''});
+    const hdr=(rows[0]||[]).map(h=>cedNorm(h));
+    let ci_nit=-1, ci_nom=-1, ci_ape=-1;
+    hdr.forEach((h,i)=>{
+      if(ci_nit<0 && (h==='NIT'||h.indexOf('CEDULA')>=0||h.indexOf('DOCUMENTO')>=0||h==='CC')) ci_nit=i;
+      if(ci_nom<0 && h.indexOf('NOMBRE')>=0) ci_nom=i;
+      if(ci_ape<0 && h.indexOf('APELLIDO')>=0) ci_ape=i;
+    });
+    if(ci_nit<0) ci_nit=0; if(ci_nom<0) ci_nom=1; if(ci_ape<0) ci_ape=2;
+    CEDULAS=[];
+    for(let r=1;r<rows.length;r++){
+      const row=rows[r]||[];
+      const nit=String(row[ci_nit]==null?'':row[ci_nit]).split('.')[0].trim();
+      const full=((row[ci_nom]||'')+' '+(row[ci_ape]||'')).trim();
+      if(!nit || !cedToks(full).length) continue;
+      CEDULAS.push({tk:new Set(cedToks(full)), nit, full});
+    }
+    renderTablaCedulas();
+  }catch(e){ alert('No se pudo leer el Excel de cédulas: '+(e.message||e)); console.error(e); }
+}
+function cedMatch(nombre){
+  const tk=new Set(cedToks(nombre)); if(!tk.size) return null;
+  let best=null,bs=0,ties=0;
+  for(const c of CEDULAS){ let sc=0; for(const t of tk) if(c.tk.has(t)) sc++; if(sc>bs){bs=sc;best=c;ties=1;} else if(sc===bs&&sc>0) ties++; }
+  if(!best||bs===0) return null;
+  const cob=bs/tk.size;
+  const claro = ties===1 && (cob>=1.0 || (cob>=0.8 && bs>=2));
+  return {nit:best.nit, full:best.full, cob, ties, claro};
+}
+function renderTablaCedulas(){
+  const wrap=document.getElementById('cedTablaWrap'), acc=document.getElementById('cedAcciones'), res=document.getElementById('cedResumen');
+  if(!ESTADOS.length){ res.style.display='block'; res.innerHTML='⚠️ Primero carga o genera los estados de cuenta.'; wrap.style.display='none'; acc.style.display='none'; return; }
+  if(!CEDULAS.length){ res.style.display='block'; res.innerHTML='Sube el Excel de cédulas para empezar.'; wrap.style.display='none'; acc.style.display='none'; return; }
+  let auto=0,dud=0,sin=0;
+  let html='<thead><tr><th>#</th><th>Propietario</th><th>Cédula / NIT</th><th>Estado</th></tr></thead><tbody>';
+  ESTADOS.forEach((e,ei)=>{
+    const owners=(e.prop||'').split('\n').filter(Boolean);
+    owners.forEach((o,oi)=>{
+      const m=cedMatch(o);
+      let nit = m ? m.nit : '';
+      let badge, rowcls='';
+      if(m && m.claro){ badge='<span class="badge si">✓ auto</span>'; auto++; }
+      else if(m){ badge='<span class="badge no">dudoso — verifica</span>'; dud++; rowcls=' style="background:#fff8e1"'; }
+      else { badge='<span class="badge no">sin match</span>'; sin++; rowcls=' style="background:#fdecea"'; nit=''; }
+      html+=`<tr${rowcls}><td>${ei+1}</td><td>${escapeHtml(o)}</td>`+
+        `<td><input class="ced-nit" data-ei="${ei}" value="${nit}" placeholder="escribe la cédula" style="width:150px;padding:5px 7px;border:1px solid var(--borde);border-radius:6px"></td>`+
+        `<td>${badge}${m&&!m.claro?(' <span class="hex">sug: '+m.nit+'</span>'):''}</td></tr>`;
+    });
+  });
+  html+='</tbody>';
+  document.getElementById('cedTabla').innerHTML=html;
+  wrap.style.display='block'; acc.style.display='flex'; res.style.display='block';
+  res.innerHTML=`<b>${auto}</b> automáticos · <b style="color:#b7791f">${dud} dudosos</b> (verifica el sugerido) · <b style="color:#b3261e">${sin} sin cédula</b> (escríbela). Se descargan solo los que tengan cédula.`;
+}
+async function descargarPorCedula(){
+  if(!ESTADOS.length){ alert('Carga estados primero.'); return; }
+  if(!window.jspdf || typeof JSZip==='undefined'){ alert('Faltan librerías (¿sin internet?).'); return; }
+  const inputs=[...document.querySelectorAll('#cedTabla .ced-nit')];
+  const tareas=[];
+  inputs.forEach(inp=>{ const ei=+inp.dataset.ei, nit=inp.value.trim().replace(/[\\/:*?"<>|]/g,''); if(nit) tareas.push({ei, nit}); });
+  if(!tareas.length){ alert('No hay ninguna cédula asignada.'); return; }
+  const btn=document.getElementById('btnCedDesc'); const orig=btn.textContent; btn.disabled=true;
+  try{
+    await MEMBRETE_READY;
+    const zip=new JSZip(); const usados={}; const cache={};
+    for(let k=0;k<tareas.length;k++){
+      const {ei,nit}=tareas[k];
+      btn.textContent=`⏳ ${k+1}/${tareas.length}…`;
+      if(!cache[ei]) cache[ei]=await pdfArrayBufferDeEstado(ESTADOS[ei]);
+      let nombre=nit;
+      if(usados[nombre]){ usados[nombre]++; nombre=nit+' ('+usados[nombre]+')'; } else usados[nombre]=1;
+      zip.file(nombre+'.pdf', cache[ei].slice(0));
+    }
+    btn.textContent='⏳ Comprimiendo…';
+    const blob=await zip.generateAsync({type:'blob'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url;
+    const mz=mesParaNombre()||mesDe(ESTADOS[0]);
+    a.download=('Estados por cedula'+(mz?' '+mz:'')).trim()+'.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+  }catch(e){ alert('Error: '+(e.message||e)); console.error(e); }
+  finally{ btn.textContent=orig; btn.disabled=false; }
 }
 
 function mostrarError(msg){
