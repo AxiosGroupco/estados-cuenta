@@ -47,6 +47,9 @@
   .btn:disabled{opacity:.5;cursor:not-allowed}
   .spacer{flex:1}
   .count{font-size:13px;color:#666}
+  .mes-nombre{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:#555;font-weight:600;background:var(--gris);border:1px solid var(--borde);border-radius:9px;padding:5px 10px}
+  .mes-nombre select,.mes-nombre input{border:1px solid var(--borde);border-radius:6px;padding:5px 7px;font-size:12.5px;font-family:inherit}
+  .mes-nombre input{width:56px}
   .hint{background:#fff;margin:20px auto;max-width:1000px;padding:18px 22px;border-radius:12px;border:1px solid var(--borde);font-size:14px;line-height:1.5}
   .hint code{background:var(--gris);padding:2px 6px;border-radius:4px}
   .hint table{border-collapse:collapse;margin-top:10px;font-size:12.5px;width:100%}
@@ -186,6 +189,15 @@
   <span class="count" id="count"></span>
   <span class="count" id="saveStatus" style="opacity:0;transition:opacity .3s;color:var(--verde-osc);font-weight:600"></span>
   <span class="spacer"></span>
+  <span class="mes-nombre" title="Mes que aparecerá en el nombre de los archivos PDF">📅 Mes del nombre:
+    <select id="mesSel" onchange="guardarMesNombre()">
+      <option value="">Auto (de la fecha)</option>
+      <option>ENERO</option><option>FEBRERO</option><option>MARZO</option><option>ABRIL</option>
+      <option>MAYO</option><option>JUNIO</option><option>JULIO</option><option>AGOSTO</option>
+      <option>SEPTIEMBRE</option><option>OCTUBRE</option><option>NOVIEMBRE</option><option>DICIEMBRE</option>
+    </select>
+    <input id="anioSel" placeholder="Año" inputmode="numeric" maxlength="4" oninput="guardarMesNombre()">
+  </span>
   <button class="btn btn-ghost" id="btnClear" onclick="limpiarTodo()" style="display:none">🗑️ Limpiar todo</button>
   <button class="btn btn-primary" id="btnPdf" onclick="descargarPDF()" disabled>⬇️ Descargar PDF (uno por propietario)</button>
   <button class="btn btn-ghost" id="btnPrint" onclick="window.print()" disabled>🖨️ Imprimir</button>
@@ -863,8 +875,24 @@ function mesDe(e){
   if(e.per && e.per.trim()) return e.per.trim().toUpperCase();
   return '';
 }
+// Mes elegido por el usuario para el nombre; si está vacío, se usa el de la fecha
+function mesParaNombre(){
+  const s=document.getElementById('mesSel'); const a=document.getElementById('anioSel');
+  const m=s?s.value.trim():''; if(!m) return '';
+  const y=a?a.value.trim():'';
+  return (m+(y?' '+y:'')).trim();
+}
+function guardarMesNombre(){
+  try{ localStorage.setItem('ga_mesNombre', JSON.stringify({m:document.getElementById('mesSel').value, y:document.getElementById('anioSel').value})); }catch(e){}
+}
+function restaurarMesNombre(){
+  try{ const g=JSON.parse(localStorage.getItem('ga_mesNombre')||'{}');
+    if(g.m!=null) document.getElementById('mesSel').value=g.m;
+    if(g.y!=null) document.getElementById('anioSel').value=g.y;
+  }catch(e){}
+}
 function nombreArchivo(e){
-  const mes=mesDe(e);
+  const mes = mesParaNombre() || mesDe(e);
   const prop=(e.prop||'').split('\n').filter(Boolean).join(' - ').trim();
   const inm=(e.inm||'').trim();
   let quien = inm ? (prop ? prop+' - '+inm : inm) : (prop || 'SIN NOMBRE');
@@ -1048,7 +1076,7 @@ async function descargarPDF(){
       const blob=await zip.generateAsync({type:'blob'});
       const url=URL.createObjectURL(blob);
       const a=document.createElement('a'); a.href=url;
-      a.download=('Estados de Cuenta'+(mesDe(ESTADOS[0])?' '+mesDe(ESTADOS[0]):'')).trim()+'.zip';
+      { const mz = mesParaNombre() || mesDe(ESTADOS[0]); a.download=('Estados de Cuenta'+(mz?' '+mz:'')).trim()+'.zip'; }
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(()=>URL.revokeObjectURL(url),2000);
     }
@@ -1105,6 +1133,7 @@ function descargarPlantilla(){
 
 // Restaurar la lista guardada en este equipo al abrir la app
 restaurarGuardado();
+restaurarMesNombre();
 </script>
 </body>
 </html>
