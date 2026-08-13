@@ -64,6 +64,7 @@
     position:relative;width:816px;height:1056px;   /* Carta a 96dpi */
     margin:0 auto 28px;background:#fff;overflow:hidden;
     box-shadow:0 4px 18px rgba(0,0,0,.12);
+    scroll-margin-top:90px;   /* al saltar a una hoja, deja espacio para la barra fija */
   }
   .statement .bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;display:block}
   .statement .doc-img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;z-index:0;display:block;background:#fff}
@@ -758,10 +759,21 @@ function guardarEstado(){
   const prop = splitOwners(getProps().join('\n'));
   if(!prop && !lineas.length){ alert('Escribe al menos un propietario y un concepto.'); return; }
   const estado = {ciudad:val('f_ciudad'), fecha:val('f_fecha'), prop, inm:val('f_inm'), per:val('f_periodo'), lineas, soporte:formSoporte};
-  if(editIndex>=0){ ESTADOS[editIndex] = estado; }
+  const eraEdicion = editIndex>=0;
+  const idxEditado = editIndex;   // guardar el índice antes de resetForm
+  if(eraEdicion){ ESTADOS[editIndex] = estado; }
   else { ESTADOS.push(estado); }
-  render();
   resetForm();
+  // Al editar, volver a la hoja que estaba corrigiendo (no al inicio)
+  render().then(()=>{
+    if(eraEdicion){
+      toggleEditor(false);   // cerrar el editor para ver la hoja
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        const card = document.querySelectorAll('#docs .statement')[idxEditado];
+        if(card) card.scrollIntoView({behavior:'smooth', block:'start'});
+      }));
+    }
+  });
 }
 function resetForm(){
   editIndex = -1;
